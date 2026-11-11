@@ -3,7 +3,8 @@
 提供 WebSocket 和 HTTP 接口用于远程操作滑块验证
 """
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 import asyncio
 import time
@@ -13,6 +14,36 @@ from utils.captcha_remote_control import captcha_controller
 
 # 创建路由器
 router = APIRouter(prefix="/api/captcha", tags=["captcha"])
+security = HTTPBearer(auto_error=False)
+
+
+def _authenticate(credentials):
+    # 延迟导入以复用管理端会话校验，避免 reply_server 注册路由时循环导入。
+    from app.reply_server import require_auth, verify_token
+    return require_auth(verify_token(credentials))
+
+
+def _current_user(credentials=Depends(security)):
+    return _authenticate(credentials)
+
+
+def _require_owned_account(session_id, current_user):
+    from app.db_manager import db_manager
+    if db_manager.get_cookie_owner_user(session_id) != current_user['user_id']:
+        raise HTTPException(status_code=404, detail="账号不存在或无权访问")
+
+
+def _websocket_user(websocket, session_id):
+    # 浏览器 WebSocket 不能设置 Authorization，使用子协议携带 Token，避免写入 URL 日志。
+    authorization = websocket.headers.get('authorization', '')
+    scheme, _, token = authorization.partition(' ')
+    if scheme.lower() != 'bearer':
+        token = next((p[len('bearer.'):] for p in websocket.scope.get('subprotocols', [])
+                      if p.startswith('bearer.')), '')
+    credentials = HTTPAuthorizationCredentials(scheme='Bearer', credentials=token) if token else None
+    current_user = _authenticate(credentials)
+    _require_owned_account(session_id, current_user)
+    return current_user
 
 
 class MouseEvent(BaseModel):
@@ -37,7 +68,13 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     """
     WebSocket 连接用于实时传输截图和接收鼠标事件
     """
-    await websocket.accept()
+    try:
+        _websocket_user(websocket, session_id)
+    except HTTPException:
+        await websocket.close(code=1008)
+        return
+    subprotocol = 'captcha' if 'captcha' in websocket.scope.get('subprotocols', []) else None
+    await websocket.accept(subprotocol=subprotocol)
     logger.info(f"🔌 WebSocket 连接建立: {session_id}")
     
     # 注册 WebSocket 连接
@@ -64,6 +101,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 await websocket.close()
                 return
 
+        _websocket_user(websocket, session_id)
         if session_id in captcha_controller.active_sessions:
             session_data = captcha_controller.active_sessions[session_id]
             await websocket.send_json({
@@ -88,6 +126,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         # 持续接收客户端消息
         while True:
             data = await websocket.receive_json()
+            _websocket_user(websocket, session_id)
             msg_type = data.get('type')
             
             if msg_type == 'mouse_event':
@@ -157,6 +196,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     
     except WebSocketDisconnect:
         logger.info(f"🔌 WebSocket 连接断开: {session_id}")
+
+    except HTTPException:
+        await websocket.close(code=1008)
     
     except Exception as e:
         logger.error(f"❌ WebSocket 错误: {e}")
@@ -165,7 +207,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     
     finally:
         # 清理
-        if session_id in captcha_controller.websocket_connections:
+        if captcha_controller.websocket_connections.get(session_id) is websocket:
             del captcha_controller.websocket_connections[session_id]
         
         logger.info(f"🔒 WebSocket 会话结束: {session_id}")
@@ -176,10 +218,14 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 # =============================================================================
 
 @router.get("/sessions")
-async def get_active_sessions():
+async def get_active_sessions(current_user=Depends(_current_user)):
     """获取所有活跃的验证会话"""
     sessions = []
+    from app.db_manager import db_manager
+    owned_accounts = db_manager.get_all_cookies(current_user['user_id'])
     for session_id, data in captcha_controller.active_sessions.items():
+        if session_id not in owned_accounts:
+            continue
         sessions.append({
             'session_id': session_id,
             'completed': data.get('completed', False),
@@ -193,8 +239,9 @@ async def get_active_sessions():
 
 
 @router.get("/session/{session_id}")
-async def get_session_info(session_id: str):
+async def get_session_info(session_id: str, current_user=Depends(_current_user)):
     """获取指定会话的信息"""
+    _require_owned_account(session_id, current_user)
     if session_id not in captcha_controller.active_sessions:
         raise HTTPException(status_code=404, detail="会话不存在")
     
@@ -210,8 +257,9 @@ async def get_session_info(session_id: str):
 
 
 @router.get("/screenshot/{session_id}")
-async def get_screenshot(session_id: str):
+async def get_screenshot(session_id: str, current_user=Depends(_current_user)):
     """获取最新截图"""
+    _require_owned_account(session_id, current_user)
     screenshot = await captcha_controller.update_screenshot(session_id)
     
     if not screenshot:
@@ -221,8 +269,9 @@ async def get_screenshot(session_id: str):
 
 
 @router.post("/mouse_event")
-async def handle_mouse_event(event: MouseEvent):
+async def handle_mouse_event(event: MouseEvent, current_user=Depends(_current_user)):
     """处理鼠标事件（HTTP方式，不推荐，建议使用WebSocket）"""
+    _require_owned_account(event.session_id, current_user)
     success = await captcha_controller.handle_mouse_event(
         event.session_id,
         event.event_type,
@@ -243,8 +292,9 @@ async def handle_mouse_event(event: MouseEvent):
 
 
 @router.post("/check_completion")
-async def check_completion(request: SessionCheckRequest):
+async def check_completion(request: SessionCheckRequest, current_user=Depends(_current_user)):
     """检查验证是否完成"""
+    _require_owned_account(request.session_id, current_user)
     completed = await captcha_controller.check_completion(request.session_id)
     
     return {
@@ -254,8 +304,9 @@ async def check_completion(request: SessionCheckRequest):
 
 
 @router.delete("/session/{session_id}")
-async def close_session(session_id: str):
+async def close_session(session_id: str, current_user=Depends(_current_user)):
     """关闭会话"""
+    _require_owned_account(session_id, current_user)
     await captcha_controller.close_session(session_id)
     return {'success': True}
 
@@ -265,11 +316,12 @@ async def close_session(session_id: str):
 # =============================================================================
 
 @router.get("/status/{session_id}")
-async def get_captcha_status(session_id: str):
+async def get_captcha_status(session_id: str, current_user=Depends(_current_user)):
     """
     获取验证状态
     用于前端轮询检查验证是否完成
     """
+    _require_owned_account(session_id, current_user)
     try:
         is_completed = captcha_controller.is_completed(session_id)
         session_exists = captcha_controller.session_exists(session_id)

@@ -279,7 +279,8 @@ const AccountList: React.FC = () => {
       if (closed) return;
       const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
       const ws = new WebSocket(
-        `${scheme}://${location.host}/api/captcha/ws/${encodeURIComponent(captchaAccount.id)}`
+        `${scheme}://${location.host}/api/captcha/ws/${encodeURIComponent(captchaAccount.id)}`,
+        ['captcha', `bearer.${localStorage.getItem('auth_token') || ''}`],
       );
       captchaWsRef.current = ws;
 
