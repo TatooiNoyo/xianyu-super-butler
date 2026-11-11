@@ -9474,7 +9474,7 @@ class XianyuLive:
             }
 
             async with self.session.post(
-                api_config.get('url', 'http://localhost:8080/xianyu/reply'),
+                api_config.get('url', 'http://localhost:7850/xianyu/reply'),
                 json=payload,
                 timeout=timeout
             ) as response:

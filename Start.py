@@ -703,7 +703,7 @@ def _start_api_server():
 
     # 优先使用环境变量配置
     host = os.getenv('API_HOST', '0.0.0.0')  # 默认绑定所有接口
-    port = int(os.getenv('API_PORT', '8080'))  # 默认端口8080
+    port = int(os.getenv('API_PORT', '7850'))  # 默认端口7850
 
     # 如果配置文件中有特定配置，则使用配置文件
     if 'host' in api_conf and 'API_HOST' not in os.environ:
@@ -719,11 +719,11 @@ def _start_api_server():
         and 'API_HOST' not in os.environ
         and 'API_PORT' not in os.environ
     ):
-        url = api_conf.get('url', 'http://0.0.0.0:8080/xianyu/reply')
+        url = api_conf.get('url', 'http://0.0.0.0:7850/xianyu/reply')
         parsed = urlparse(url)
         if parsed.hostname and parsed.hostname != 'localhost':
             host = parsed.hostname
-        port = parsed.port or 8080
+        port = parsed.port or 7850
 
     logger.info(f"启动Web服务器: http://{host}:{port}")
     # 在后台线程中创建独立事件循环并直接运行 server.serve()

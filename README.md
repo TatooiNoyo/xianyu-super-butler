@@ -98,7 +98,7 @@
 
 ```bash
 docker run -d --name xianyu-butler \
-  -p 8080:8080 \
+  -p 7850:8080 \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/logs:/app/logs \
   -v $(pwd)/backups:/app/backups \
@@ -108,7 +108,7 @@ docker run -d --name xianyu-butler \
   ghcr.io/23star/xianyu-super-butler:latest
 ```
 
-浏览器打开 `http://服务器IP:8080` 即可。数据都在当前目录的 `data` / `logs` / `backups` 里，
+浏览器打开 `http://服务器IP:7850` 即可。数据都在当前目录的 `data` / `logs` / `backups` 里，
 升级只需 `docker pull` 后重建容器，数据不丢。
 
 Windows PowerShell 把 `$(pwd)` 换成 `${PWD}`，续行的 `\` 换成反引号 `` ` ``。
@@ -175,9 +175,9 @@ python Start.py
 
 ### 访问
 
-- 管理页面：`http://localhost:8080/`
-- API 文档：`http://localhost:8080/docs`
-- 健康检查：`http://localhost:8080/health`
+- 管理页面：`http://localhost:7850/`
+- API 文档：`http://localhost:7850/docs`
+- 健康检查：`http://localhost:7850/health`
 
 默认管理员 **admin / admin123**，登录后请在「设置 → 账号与同步 → 修改登录密码」立即改掉。
 

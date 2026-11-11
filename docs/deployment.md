@@ -66,7 +66,7 @@ docker compose logs xianyu-app | grep -E "Xvfb|Patchright"
    改用 `docker compose -f docker-compose.nas.yml up -d` 拉取预构建镜像。
 3. **确认版本**：使用 Docker Engine 24+、Docker Compose v2；本地构建至少 4 GB 可用内存，仅拉取镜像 2 GB 即可。
 4. **确认 `.env`**：不填也能启动，会使用默认账号 admin / admin123。
-5. **确认端口**：`8080` 被占用时，在 `.env` 设置 `WEB_PORT=8081`，然后访问对应端口。
+5. **确认端口**：`7850` 被占用时，本地构建的 Docker Compose 在 `.env` 设置 `WEB_PORT=7851`；源码启动使用 `API_PORT=7851 python Start.py`，并同步修改 `global_config.yml` 中的 `AUTO_REPLY.api.url`，然后访问对应端口。
 6. **确认目录权限**：容器必须能够写入 `data`、`logs` 和 `backups`。
 7. **国内网络用 CN 配置**：`Dockerfile-cn` 已把 apt、pip、npm 和 Chromium 全部指向国内镜像；
    用默认 `Dockerfile` 在国内构建，通常会卡在下载 Chromium 直到超时。
@@ -80,7 +80,7 @@ docker compose logs xianyu-app | grep -E "Xvfb|Patchright"
 docker compose config
 docker compose ps
 docker compose logs --tail=200 xianyu-app
-curl http://localhost:8080/health
+curl http://localhost:7850/health
 ```
 
 ## 使用流程

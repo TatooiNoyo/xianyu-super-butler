@@ -1,6 +1,6 @@
 # 上游功能迁移
 
-本项目基于 `zhinianboke/xianyu-auto-reply` 二次开发，同时保留当前管理界面、SQLite 默认部署方式和单一 `8080` 应用入口。
+本项目基于 `zhinianboke/xianyu-auto-reply` 二次开发，同时保留当前管理界面、SQLite 默认部署方式和单一 `7850` 应用入口。
 
 ## 迁移原则
 

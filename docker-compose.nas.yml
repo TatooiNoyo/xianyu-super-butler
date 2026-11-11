@@ -21,7 +21,7 @@ services:
     container_name: xianyu-super-butler
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "7850:8080"
     volumes:
       - ./data:/app/data:rw
       - ./logs:/app/logs:rw

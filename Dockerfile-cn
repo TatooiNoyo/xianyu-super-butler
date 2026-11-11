@@ -89,9 +89,9 @@ RUN playwright install-deps chromium && \
     chmod 777 /app/logs /app/data /app/backups /app/static/uploads /app/static/uploads/images && \
     chmod +x /app/entrypoint.sh
 
-EXPOSE 8080
+EXPOSE 7850
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
-    CMD curl -f http://localhost:8080/health || exit 1
+    CMD curl -f http://localhost:7850/health || exit 1
 
 CMD ["/app/entrypoint.sh"]

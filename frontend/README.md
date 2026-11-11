@@ -10,6 +10,6 @@ cd ..
 python Start.py
 ```
 
-浏览器统一访问 `http://localhost:8080/`。
+浏览器统一访问 `http://localhost:7850/`。
 
 `npm run dev` 和 `npm run preview` 已禁用，避免启动与完整应用重复且缺少后端 API 的独立前端实例。
