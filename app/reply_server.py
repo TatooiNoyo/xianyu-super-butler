@@ -689,6 +689,9 @@ async def login(request: LoginRequest):
                 message="用户不存在"
             )
 
+        if not user['is_active']:
+            return LoginResponse(success=False, message="账号已禁用")
+
         # 生成token
         token = generate_token()
         SESSION_TOKENS[token] = {
@@ -1160,6 +1163,8 @@ async def send_verification_code(request: SendCodeRequest):
                     success=False,
                     message="该邮箱未注册"
                 )
+            if not existing_user['is_active']:
+                return SendCodeResponse(success=False, message="账号已禁用")
 
         # 5. 生成验证码
         code = db_manager.generate_verification_code()
@@ -1277,10 +1282,6 @@ async def register(request: RegisterRequest):
 
 # ------------------------- 发送消息接口 -------------------------
 
-# 固定的API秘钥（生产环境中应该从配置文件或环境变量读取）
-# 注意：现在从系统设置中读取QQ回复消息秘钥
-API_SECRET_KEY = "xianyu_api_secret_2024"  # 保留作为后备
-
 class SendMessageRequest(BaseModel):
     api_key: str
     cookie_id: str
@@ -1307,15 +1308,14 @@ def verify_api_key(api_key: str) -> bool:
         from app.db_manager import db_manager
         qq_secret_key = db_manager.get_system_setting('qq_reply_secret_key')
 
-        # 如果系统设置中没有配置，使用默认值
-        if not qq_secret_key:
-            qq_secret_key = API_SECRET_KEY
-
-        return api_key == qq_secret_key
+        if not qq_secret_key or qq_secret_key in {'xianyu_qq_reply_2024', 'xianyu_api_secret_2024'}:
+            return False
+        return bool(api_key) and secrets.compare_digest(
+            api_key.encode('utf-8'), qq_secret_key.encode('utf-8')
+        )
     except Exception as e:
         logger.error(f"验证API秘钥时发生异常: {e}")
-        # 异常情况下使用默认秘钥验证
-        return api_key == API_SECRET_KEY
+        return False
 
 
 def _get_owned_chat_account(cookie_id: str, current_user: Dict[str, Any]) -> str:
@@ -1699,7 +1699,7 @@ async def send_message_api(request: SendMessageRequest):
 
         # 验证API秘钥
         if not verify_api_key(cleaned_api_key):
-            logger.warning(f"API秘钥验证失败: {cleaned_api_key}")
+            logger.warning("API秘钥验证失败")
             return SendMessageResponse(
                 success=False,
                 message="API秘钥验证失败"

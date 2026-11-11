@@ -4,6 +4,7 @@ import threading
 import time
 import json
 import random
+import secrets
 import string
 import io
 import base64
@@ -982,11 +983,18 @@ class DBManager:
             ('smtp_from', '', '发件人显示名（留空则使用用户名）'),
             ('smtp_use_tls', 'true', '是否启用TLS'),
             ('smtp_use_ssl', 'false', '是否启用SSL'),
-            ('qq_reply_secret_key', 'xianyu_qq_reply_2024', 'QQ回复消息API秘钥'),
+            ('qq_reply_secret_key', '', 'QQ回复消息API秘钥'),
             ('item_sync_enabled', 'true', '是否启用定时自动同步商品'),
             ('item_sync_interval', '600', '商品同步间隔时间（秒）'),
             ('item_sync_max_pages', '5', '每次最多同步的页数')
             ''')
+
+            # 首次安装生成独立密钥；升级时替换已公开的历史默认值，保留自定义密钥。
+            cursor.execute('''
+                UPDATE system_settings SET value = ?
+                WHERE key = 'qq_reply_secret_key'
+                  AND (value IS NULL OR value IN ('', 'xianyu_qq_reply_2024', 'xianyu_api_secret_2024'))
+            ''', (secrets.token_urlsafe(32),))
 
             # 检查并升级数据库
             self.check_and_upgrade_db(cursor)
