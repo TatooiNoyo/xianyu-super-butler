@@ -153,6 +153,7 @@ class DeliveryTemplatePersistenceTests(unittest.TestCase):
         self.assertEqual({}, card["delivery_template_images"])
 
     def test_legacy_rule_query_exposes_template_fields(self):
+        self.manager.save_cookie('seller-1', 'unb=seller-1', 1)
         card_id = self.manager.create_card(
             name="batch",
             card_type="data",

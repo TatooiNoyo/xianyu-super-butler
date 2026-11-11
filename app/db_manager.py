@@ -2158,7 +2158,9 @@ class DBManager:
                         user_id = admin_user[0] if admin_user else 1
 
                 self._execute_sql(cursor,
-                    "INSERT OR REPLACE INTO cookies (id, value, user_id) VALUES (?, ?, ?)",
+                    """INSERT INTO cookies (id, value, user_id) VALUES (?, ?, ?)
+                       ON CONFLICT(id) DO UPDATE SET
+                           value = excluded.value, user_id = excluded.user_id""",
                     (cookie_id, cookie_value, user_id)
                 )
 
@@ -5134,6 +5136,8 @@ class DBManager:
                     FROM delivery_rules dr
                     LEFT JOIN cards c ON dr.card_id = c.id
                     WHERE dr.enabled = 1 AND c.enabled = 1
+                      AND dr.user_id = (SELECT user_id FROM cookies WHERE id = ?)
+                      AND c.user_id = dr.user_id
                       AND (
                         (dr.cookie_id = ? AND dr.item_id = ?)
                         OR (
@@ -5148,7 +5152,7 @@ class DBManager:
                     ORDER BY scope_rank ASC, LENGTH(dr.keyword) DESC, dr.id ASC
                     ''',
                     (
-                        cookie_id, item_id, cookie_id,
+                        cookie_id, item_id, cookie_id, cookie_id,
                         cookie_id, item_id,
                         cookie_id, search_text, search_text,
                         search_text, search_text,

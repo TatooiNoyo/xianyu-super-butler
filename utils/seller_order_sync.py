@@ -30,7 +30,7 @@ def _save_order(db_manager, cookie_id: str, parsed: Dict[str, Any]) -> bool:
     if not order_id:
         return False
 
-    return db_manager.insert_or_update_order(
+    saved = db_manager.insert_or_update_order(
         order_id=order_id,
         item_id=parsed.get("item_id") or None,
         buyer_id=parsed.get("buyer_id") or None,
