@@ -13,7 +13,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from XianyuAutoAsync import XianyuLive
 from app.db_manager import DBManager
@@ -99,6 +99,81 @@ class GetDefaultReplyItemIsolationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(result)
         self.assertEqual(result['text'], '你好 小明，商品' + ITEM_1)
+
+    async def test_product_defaults_are_independent_and_deletion_restores_account_default(self):
+        self.db.update_item_reply(ACC_A, ITEM_1, '商品一回复')
+        self.db.update_item_reply(ACC_A, 'item-2002', '商品二回复')
+        insert_default_reply(self.db, ACC_A, '账号回复')
+        live = self.make_live(ACC_A)
+
+        first = await live.get_default_reply('买家', 'buyer', '咨询', 'chat', ITEM_1)
+        second = await live.get_default_reply('买家', 'buyer', '咨询', 'chat', 'item-2002')
+        self.assertEqual(first['text'], '商品一回复')
+        self.assertEqual(second['text'], '商品二回复')
+
+        self.assertTrue(self.db.delete_item_reply(ACC_A, ITEM_1))
+        fallback = await live.get_default_reply('买家', 'buyer', '咨询', 'chat', ITEM_1)
+        self.assertEqual(fallback['text'], '账号回复')
+        self.assertEqual(self.db.get_item_reply(ACC_A, 'item-2002')['reply_content'], '商品二回复')
+
+    async def test_same_keyword_uses_product_scope_then_common_scope_case_insensitively(self):
+        self.db.save_text_keywords_only(ACC_A, [
+            ('Price', '通用价格', None),
+            ('Price', '商品一价格', ITEM_1),
+            ('Price', '商品二价格', 'item-2002'),
+        ])
+        self.db.save_text_keywords_only(ACC_B, [('Price', '另一账号价格', ITEM_1)])
+        live = self.make_live(ACC_A)
+
+        for item_id, expected in [
+            (ITEM_1, '商品一价格'), ('item-2002', '商品二价格'),
+            ('unconfigured', '通用价格'), (None, '通用价格'),
+        ]:
+            with self.subTest(item_id=item_id):
+                reply = await live.get_keyword_reply('买家', 'buyer', 'what is the PRICE?', item_id)
+                self.assertEqual(reply, expected)
+
+        self.assertEqual(await self.make_live(ACC_B).get_keyword_reply(
+            '买家', 'buyer', 'price', ITEM_1
+        ), '另一账号价格')
+
+    async def test_replacing_text_rules_preserves_product_images_and_other_accounts(self):
+        self.db.save_image_keyword(ACC_A, '图片', '/picture.png', ITEM_1)
+        self.db.save_text_keywords_only(ACC_B, [('价格', '另一账号', ITEM_1)])
+        self.db.save_text_keywords_only(ACC_A, [
+            ('价格', '通用价格', None), ('价格', '商品一新价格', ITEM_1),
+            ('价格', '商品二价格', 'item-2002'),
+        ])
+
+        rules = self.db.get_keywords_with_type(ACC_A)
+        self.assertEqual(len(rules), 4)
+        image = next(rule for rule in rules if rule['type'] == 'image')
+        self.assertEqual((image['item_id'], image['image_url']), (ITEM_1, '/picture.png'))
+        self.assertEqual(self.db.get_keywords_with_item_id(ACC_B), [('价格', '另一账号', ITEM_1)])
+
+    async def test_reply_pipeline_keeps_ai_before_product_default(self):
+        live = self.make_live(ACC_A)
+        live.get_keyword_reply = AsyncMock(return_value=None)
+        live.get_ai_reply = AsyncMock(return_value='AI回复')
+        live.get_default_reply = AsyncMock(return_value={'text': '商品默认回复', 'image_url': None})
+        live.send_msg = AsyncMock()
+        live._add_reply_decision_log = Mock(return_value=1)
+        live._update_reply_decision_log = Mock()
+
+        with (
+            patch.dict('XianyuAutoAsync.AUTO_REPLY', {'enabled': True, 'api': {'enabled': False}}),
+            patch('XianyuAutoAsync.pause_manager.is_chat_paused', return_value=False),
+            patch.object(self.db, 'matches_message_filter', return_value=None),
+        ):
+            await live._process_chat_message_reply({}, None, '买家', 'buyer', '你好', ITEM_1, 'chat', 'now')
+            live.get_default_reply.assert_not_awaited()
+            live.send_msg.assert_awaited_once_with(None, 'chat', 'buyer', 'AI回复')
+
+            live.get_ai_reply.return_value = None
+            live.send_msg.reset_mock()
+            await live._process_chat_message_reply({}, None, '买家', 'buyer', '你好', ITEM_1, 'chat', 'now')
+            live.get_default_reply.assert_awaited_once_with('买家', 'buyer', '你好', 'chat', ITEM_1)
+            live.send_msg.assert_awaited_once_with(None, 'chat', 'buyer', '商品默认回复')
 
 
 class ItemReplayUniqueMigrationTests(unittest.TestCase):

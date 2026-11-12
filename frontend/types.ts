@@ -495,6 +495,8 @@ export interface ReplyRule {
   enabled: boolean;
   /** 绑定的商品 ID；空串/未定义为通用关键词（后端按 keyword+item_id 做唯一键） */
   item_id?: string;
+  type?: 'text' | 'image';
+  image_url?: string;
 }
 
 // Stats
@@ -606,6 +608,15 @@ export interface DefaultReply {
   reply_content: string;
   reply_once: boolean;
   reply_image_url?: string;
+}
+
+export interface ItemReply {
+  cookie_id: string;
+  item_id: string;
+  reply_content: string;
+  item_title?: string | null;
+  created_at?: string;
+  updated_at?: string;
 }
 
 // 全局公告与版本检查

@@ -3,7 +3,7 @@ import {
   LoginResponse, AccountDetail, Order, PaginatedResponse,
   AdminStats, AdminUser, Card, CardShipment, SystemSettings, ApiResponse, OrderAnalytics,
   Item, ItemDeliveryConfig, ItemDeliveryConfigSummary,
-  ProductVariantBinding, AIReplySettings, ShippingRule, ReplyRule, DefaultReply,
+  ProductVariantBinding, AIReplySettings, ShippingRule, ReplyRule, DefaultReply, ItemReply,
   DeliveryBlockRule, PersonalBlacklistEntry, MessageNotification,
   NotificationChannel, NotificationChannelType, RiskControlLog, SystemLog,
   NotificationEventDefinition, NotificationPriorityDefinition,
@@ -629,6 +629,11 @@ export const getItems = async (): Promise<Item[]> => {
     return Array.isArray(res) ? res : (res.items || []);
 }
 
+export const getAccountItems = async (cookieId: string): Promise<Item[]> => {
+  const result = await get<{ items: Item[] }>(`/items/cookie/${encodeURIComponent(cookieId)}`);
+  return result.items;
+};
+
 export const syncItemsFromAccount = async (cookieId: string): Promise<any> => {
     return post('/items/get-all-from-account', { cookie_id: cookieId });
 }
@@ -940,58 +945,76 @@ export const deletePersonalBlacklist = async (entryId: number): Promise<void> =>
 };
 
 // Rules - 关键词回复规则 (使用关键词API)
+interface KeywordRecord {
+    keyword: string;
+    reply: string;
+    item_id?: string | null;
+    type?: 'text' | 'image';
+    image_url?: string;
+}
+
+// 后端唯一键是 keyword + item_id。列表筛选或重新排序不能改变编辑目标。
+const replyRuleId = (item: KeywordRecord): string =>
+    JSON.stringify([item.keyword, item.item_id || '']);
+
+const getKeywordRecords = async (cookieId: string): Promise<KeywordRecord[]> => {
+    const result = await get<KeywordRecord[]>(`/keywords-with-item-id/${encodeURIComponent(cookieId)}`);
+    if (!Array.isArray(result)) throw new Error('关键词数据格式异常，请刷新后重试');
+    return result;
+};
+
 export const getReplyRules = async (cookieId?: string): Promise<ReplyRule[]> => {
     if (!cookieId) return [];
-    const res = await get<any>(`/keywords-with-item-id/${cookieId}`);
-    const keywords = Array.isArray(res) ? res : [];
-    return keywords.map((item: any, index: number) => ({
-        id: String(index),
+    const keywords = await getKeywordRecords(cookieId);
+    return keywords.map((item) => ({
+        id: replyRuleId(item),
         keyword: item.keyword || '',
         reply_content: item.reply || '',
-        // 透传商品绑定，编辑时据此保留 item_id，UI 也能看到已绑定商品
         item_id: item.item_id || '',
-        match_type: 'exact' as const,
+        type: item.type || 'text',
+        image_url: item.image_url,
+        match_type: 'fuzzy' as const,
         enabled: true
     }));
 }
 
 export const updateReplyRule = async (rule: Partial<ReplyRule>, cookieId: string): Promise<any> => {
-    // 获取现有关键词
-    const existing = await get<any>(`/keywords-with-item-id/${cookieId}`);
-    const keywords = Array.isArray(existing) ? existing : [];
+    const keywords = await getKeywordRecords(cookieId);
 
     // 更新或添加关键词
-    if (rule.id) {
-        const index = parseInt(rule.id);
-        if (index >= 0 && index < keywords.length) {
-            // 编辑时保留原记录的 item_id（后端按 keyword+item_id 做唯一键），
-            // 否则商品专属关键词会被静默改成通用关键词；type/image_url 一并保留
-            keywords[index] = {
-                ...keywords[index],
-                keyword: rule.keyword,
-                reply: rule.reply_content,
-                item_id: rule.item_id ?? keywords[index].item_id ?? ''
-            };
-        }
+    if (rule.id !== undefined) {
+        const index = keywords.findIndex(item => replyRuleId(item) === rule.id);
+        if (index < 0) throw new Error('该规则已变更，请刷新后重试');
+        if (keywords[index].type === 'image') throw new Error('图片关键词不支持在此编辑');
+        keywords[index] = {
+            ...keywords[index],
+            keyword: rule.keyword ?? keywords[index].keyword,
+            reply: rule.reply_content ?? keywords[index].reply,
+            item_id: rule.item_id ?? keywords[index].item_id ?? ''
+        };
     } else {
         keywords.push({
-            keyword: rule.keyword,
-            reply: rule.reply_content,
-            item_id: ''
+            keyword: rule.keyword || '',
+            reply: rule.reply_content || '',
+            item_id: rule.item_id || ''
         });
     }
 
-    return post(`/keywords-with-item-id/${cookieId}`, { keywords });
+    // 此接口替换全部文字规则；图片规则由后端保留，不能混入文字提交。
+    return post(`/keywords-with-item-id/${encodeURIComponent(cookieId)}`, {
+        keywords: keywords.filter(item => item.type !== 'image')
+    });
 }
 
 export const deleteReplyRule = async (id: string, cookieId: string): Promise<any> => {
-    const existing = await get<any>(`/keywords-with-item-id/${cookieId}`);
-    const keywords = Array.isArray(existing) ? existing : [];
-    const index = parseInt(id);
-    if (index >= 0 && index < keywords.length) {
-        keywords.splice(index, 1);
-    }
-    return post(`/keywords-with-item-id/${cookieId}`, { keywords });
+    const keywords = await getKeywordRecords(cookieId);
+    const index = keywords.findIndex(item => replyRuleId(item) === id);
+    if (index < 0) throw new Error('该规则已变更，请刷新后重试');
+    if (keywords[index].type === 'image') throw new Error('图片关键词不支持在此删除');
+    keywords.splice(index, 1);
+    return post(`/keywords-with-item-id/${encodeURIComponent(cookieId)}`, {
+        keywords: keywords.filter(item => item.type !== 'image')
+    });
 }
 
 // Settings
@@ -1341,6 +1364,32 @@ export const sendChatImage = async (
 };
 
 // Default Reply
+const itemReplyPath = (cookieId: string, itemId: string) =>
+  `/item-reply/${encodeURIComponent(cookieId)}/${encodeURIComponent(itemId)}`;
+
+export const getItemReplies = async (cookieId: string): Promise<ItemReply[]> => {
+  const result = await get<{ items: ItemReply[] }>(`/itemReplays/cookie/${encodeURIComponent(cookieId)}`);
+  return result.items;
+};
+
+export const getItemReply = async (cookieId: string, itemId: string): Promise<ItemReply | null> => {
+  try {
+    return await get<ItemReply>(itemReplyPath(cookieId, itemId));
+  } catch (error) {
+    // 只有 404 表示未配置；权限或服务异常不能被误当成空白设置。
+    if ((error as { response?: { status?: number } }).response?.status === 404) return null;
+    throw error;
+  }
+};
+
+export const updateItemReply = async (cookieId: string, itemId: string, replyContent: string): Promise<ApiResponse> => {
+  return put(itemReplyPath(cookieId, itemId), { reply_content: replyContent });
+};
+
+export const deleteItemReply = async (cookieId: string, itemId: string): Promise<ApiResponse> => {
+  return del(itemReplyPath(cookieId, itemId));
+};
+
 export const getDefaultReplies = async (): Promise<Record<string, DefaultReply>> => {
   return get('/default-replies');
 };
