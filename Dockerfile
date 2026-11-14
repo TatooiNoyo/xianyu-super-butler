@@ -12,7 +12,7 @@ FROM node:20-alpine AS frontend-builder
 
 WORKDIR /frontend
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
+RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
 RUN VITE_OUT_DIR=dist npm run build
 
@@ -30,9 +30,6 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-COPY --from=frontend-builder /frontend/dist ./static
 
 FROM base AS runtime
 
@@ -58,14 +55,18 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /opt/venv /opt/venv
-COPY --from=builder /app /app
 
 ENV VIRTUAL_ENV=/opt/venv
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
+# 浏览器安装只依赖 Python 环境，应用代码更新时复用这一层缓存。
 RUN playwright install-deps chromium && \
-    playwright install chromium && \
-    mkdir -p /app/logs /app/data /app/backups /app/static/uploads/images && \
+    playwright install chromium
+
+COPY . .
+COPY --from=frontend-builder /frontend/dist ./static
+
+RUN mkdir -p /app/logs /app/data /app/backups /app/static/uploads/images && \
     chmod 777 /app/logs /app/data /app/backups /app/static/uploads /app/static/uploads/images && \
     chmod +x /app/entrypoint.sh
 
